@@ -1,0 +1,14 @@
+{
+  "name": "blockchain",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+   "compile": "tsc",
+    "start": "tsc && node dist/index.js"
+  },
+  "devDependencies": {
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.8.2"
+  }
+}

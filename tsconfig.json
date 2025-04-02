@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "esnext",                // For modern JavaScript output
+    "module": "esnext",                // Use ES Modules
+    "moduleResolution": "node",        // Resolve modules as Node.js would
+    "esModuleInterop": true,           // Enable interop between CommonJS and ESM
+    "allowSyntheticDefaultImports": true, // Allow default imports from modules without default export
+    "strict": true,                    // Enable strict mode
+    "outDir": "./dist",                // Output compiled files to `dist` folder
+    "declaration": false,              // Don't generate declaration files
+    "sourceMap": true                  // Generate source maps for debugging
+  },
+  "include": ["src/**/*"],           // Include all TypeScript files in src folder
+  "exclude": ["node_modules"]           // Exclude node_modules folder
+}
