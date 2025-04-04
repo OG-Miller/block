@@ -1,16 +1,16 @@
 import * as readline from "node:readline";
 import fs from "node:fs";
 
-const { createHash } = await import("node:crypto");
-
 const blockchainJson = fs.readFileSync("./blockchain.json", {
   encoding: "utf8",
 });
 const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
+
 const blockchain = parsedBlockchain.blockchain;
+const { createHash } = await import("node:crypto");
 
 interface Blockchain {
-  blockchain: Block[];
+  blockchain: Array<Block | GenesisBlock>;
 }
 
 interface GenesisBlock {
@@ -39,6 +39,7 @@ async function createGenesisBlock(): Promise<GenesisBlock> {
   };
 
   const hashedBlock: string = await hashBlock(genesisBlock);
+
   return { ...genesisBlock, hash: hashedBlock };
 }
 
@@ -48,24 +49,38 @@ async function hashBlock(block: Block | GenesisBlock): Promise<string> {
   return hash.digest("hex");
 }
 
+/* Create Genesis block */
+let genesis: GenesisBlock;
+
+if (blockchain.length === 0) {
+  genesis = await createGenesisBlock();
+  blockchain.push(genesis);
+  console.log("Genesis block created ✓:", genesis);
+
+  /* Write Genesis block to blockchain.json */
+  fs.writeFile(
+    "blockchain.json",
+    JSON.stringify({ blockchain: [...blockchain] }),
+    (err) => {
+      if (err) {
+        console.log("sorry, err: ", err);
+      }
+      console.log("genesis block added 🗿");
+    },
+  );
+}
+
+/* Get new journal entry input */
 let entryInput = "";
 
-// get entry text
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
 
-rl.question(`Add new journal entry:`, (entry) => {
+rl.question("Add new journal entry: ", (entry) => {
   entryInput = entry;
   console.log(`Registered entry: "${entry.trim()}"`);
 
   rl.close();
 });
-
-let genesis: GenesisBlock;
-
-if (blockchain.length === 0) {
-  genesis = await createGenesisBlock();
-  console.log("final genesis block", genesis);
-}
