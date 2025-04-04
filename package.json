@@ -4,8 +4,9 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-   "compile": "tsc",
-    "start": "tsc && node dist/index.js"
+    "compile": "tsc",
+    "start": "tsc && node dist/index.js",
+    "format": "npx prettier -w $(git ls-files '*.ts' '*.json')"
   },
   "devDependencies": {
     "ts-loader": "^9.5.2",
