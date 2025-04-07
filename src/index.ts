@@ -7,7 +7,11 @@ const blockchainJson = fs.readFileSync("./blockchain.json", {
 const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
 
 const blockchain = parsedBlockchain.blockchain;
-const { createHash } = await import("node:crypto");
+const { createHash, randomFill, scrypt, createCipheriv } = await import(
+  "node:crypto"
+);
+
+//const PRIVATE_KEY = fs.readFileSync("./journal-entry", { encoding: "utf8" });
 
 interface Blockchain {
   blockchain: Array<Block | GenesisBlock>;
@@ -65,22 +69,51 @@ if (blockchain.length === 0) {
       if (err) {
         console.log("sorry, err: ", err);
       }
-      console.log("genesis block added 🗿");
+      console.log(`
+      genesis block added 🗿
+      `);
     },
   );
 }
 
-/* Get new journal entry input */
-let entryInput = "";
-
+/* Set up i/o interface */
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
 
+let entryInput = "";
+
+/* Get new journal entry input */
 rl.question("Add new journal entry: ", (entry) => {
   entryInput = entry;
   console.log(`Registered entry: "${entry.trim()}"`);
 
+  main();
   rl.close();
 });
+
+/* Handle new journal entry */
+function encryptJournalEntry(entry: string) {
+  const algo = "aes-192-cbc";
+  const password = "a random password";
+
+  scrypt(password, "salt", 24, (err, derivedKey) => {
+    if (err) throw err;
+    console.log({ key: derivedKey });
+
+    // make random IV (initialisation vector)
+    randomFill(new Uint8Array(16), (err, iv) => {
+      if (err) throw err;
+      const cipher = createCipheriv(algo, derivedKey, iv);
+
+      let encrypted = cipher.update(entry, "utf8", "hex");
+      encrypted += cipher.final("hex");
+      console.log({ encrypted });
+    });
+  });
+}
+
+function main() {
+  encryptJournalEntry(entryInput);
+}
