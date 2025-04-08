@@ -1,5 +1,6 @@
 import * as readline from "node:readline";
 import fs from "node:fs";
+import { publicEncrypt } from "node:crypto";
 
 const blockchainJson = fs.readFileSync("./blockchain.json", {
   encoding: "utf8",
@@ -7,11 +8,8 @@ const blockchainJson = fs.readFileSync("./blockchain.json", {
 const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
 
 const blockchain = parsedBlockchain.blockchain;
-const { createHash, randomFill, scrypt, createCipheriv } = await import(
-  "node:crypto"
-);
-
-//const PRIVATE_KEY = fs.readFileSync("./journal-entry", { encoding: "utf8" });
+const { createHash, generateKeyPair, randomFill, createCipheriv } =
+  await import("node:crypto");
 
 interface Blockchain {
   blockchain: Array<Block | GenesisBlock>;
@@ -93,26 +91,55 @@ rl.question("Add new journal entry: ", (entry) => {
   rl.close();
 });
 
-/* Handle new journal entry */
+const options = {
+  modulusLength: 4096,
+  publicKeyEncoding: {
+    type: "spki",
+    format: "pem",
+  },
+  privateKeyEncoding: {
+    type: "pkcs8",
+    format: "pem",
+    //cipher: 'aes-256-cbc',
+    //passphrase: 'top secret',
+  },
+};
+
 function encryptJournalEntry(entry: string) {
-  const algo = "aes-192-cbc";
-  const password = "a random password";
-
-  scrypt(password, "salt", 24, (err, derivedKey) => {
+  /* Create pub/priv key for encryption */
+  generateKeyPair("rsa", options, (err, privKey, pubKey) => {
     if (err) throw err;
-    console.log({ key: derivedKey });
 
-    // make random IV (initialisation vector)
-    randomFill(new Uint8Array(16), (err, iv) => {
-      if (err) throw err;
-      const cipher = createCipheriv(algo, derivedKey, iv);
+    console.log({ privKey });
+    console.log({ pubKey });
 
-      let encrypted = cipher.update(entry, "utf8", "hex");
-      encrypted += cipher.final("hex");
-      console.log({ encrypted });
-    });
+    let entryBuffer = Buffer.from(entry, "utf8");
+    console.log("entryBuffer: ----> ", entryBuffer);
+    let encryptedEntry = publicEncrypt(pubKey, entryBuffer);
+    console.log({ encryptedEntry: encryptedEntry.toString("base64") });
   });
 }
+
+// /* Handle new journal entry */
+// function encryptJournalEntry(entry: string) {
+//   const algo = "aes-192-cbc";
+//   const password = "a random password";
+//
+//   scrypt(password, "salt", 24, (err, derivedKey) => {
+//     if (err) throw err;
+//     console.log({ key: derivedKey });
+//
+//     // make random IV (initialisation vector)
+//     randomFill(new Uint8Array(16), (err, iv) => {
+//       if (err) throw err;
+//       const cipher = createCipheriv(algo, derivedKey, iv);
+//
+//       let encrypted = cipher.update(entry, "utf8", "hex");
+//       encrypted += cipher.final("hex");
+//       console.log({ encrypted });
+//     });
+//   });
+// }
 
 function main() {
   encryptJournalEntry(entryInput);
