@@ -1,6 +1,6 @@
 import * as readline from "node:readline";
 import fs from "node:fs";
-import { publicEncrypt } from "node:crypto";
+import { publicEncrypt, sign, verify } from "node:crypto";
 
 const blockchainJson = fs.readFileSync("./blockchain.json", {
   encoding: "utf8",
@@ -91,55 +91,51 @@ rl.question("Add new journal entry: ", (entry) => {
   rl.close();
 });
 
-const options = {
-  modulusLength: 4096,
-  publicKeyEncoding: {
-    type: "spki",
-    format: "pem",
-  },
-  privateKeyEncoding: {
-    type: "pkcs8",
-    format: "pem",
-    //cipher: 'aes-256-cbc',
-    //passphrase: 'top secret',
-  },
-};
-
 function encryptJournalEntry(entry: string) {
   /* Create pub/priv key for encryption */
-  generateKeyPair("rsa", options, (err, privKey, pubKey) => {
+
+  const options = {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "pem",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "pem",
+    },
+  };
+
+  /* Generate ed25519 key pair */
+  generateKeyPair("ed25519", options, (err, pubKey, privKey) => {
     if (err) throw err;
 
-    console.log({ privKey });
-    console.log({ pubKey });
+    /* Encrypt the data using AES algorithm */
+    const algo = "aes-192-cbc";
+
+    randomFill(new Uint8Array(16), (err, iv) => {
+      if (err) throw err;
+
+      randomFill(new Uint8Array(24), (err, symmetricKey) => {
+        if (err) throw err;
+
+        const cipher = createCipheriv(algo, symmetricKey, iv);
+        let encrypted = cipher.update(entry, "utf8", "hex");
+        encrypted += cipher.final("hex");
+        console.log({ encrypted });
+      });
+    });
 
     let entryBuffer = Buffer.from(entry, "utf8");
-    console.log("entryBuffer: ----> ", entryBuffer);
-    let encryptedEntry = publicEncrypt(pubKey, entryBuffer);
-    console.log({ encryptedEntry: encryptedEntry.toString("base64") });
+
+    /* Create a signature */
+    const signature = sign(null, entryBuffer, privKey);
+    console.log({ signature: signature.toString("base64") });
+
+    /* Verify the data */
+    let verified = verify(null, entryBuffer, pubKey, signature);
+    console.log({ verified });
   });
 }
-
-// /* Handle new journal entry */
-// function encryptJournalEntry(entry: string) {
-//   const algo = "aes-192-cbc";
-//   const password = "a random password";
-//
-//   scrypt(password, "salt", 24, (err, derivedKey) => {
-//     if (err) throw err;
-//     console.log({ key: derivedKey });
-//
-//     // make random IV (initialisation vector)
-//     randomFill(new Uint8Array(16), (err, iv) => {
-//       if (err) throw err;
-//       const cipher = createCipheriv(algo, derivedKey, iv);
-//
-//       let encrypted = cipher.update(entry, "utf8", "hex");
-//       encrypted += cipher.final("hex");
-//       console.log({ encrypted });
-//     });
-//   });
-// }
 
 function main() {
   encryptJournalEntry(entryInput);
