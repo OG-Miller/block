@@ -1,6 +1,5 @@
 import * as readline from "node:readline";
 import fs from "node:fs";
-import { publicEncrypt, sign, verify } from "node:crypto";
 
 const blockchainJson = fs.readFileSync("./blockchain.json", {
   encoding: "utf8",
@@ -8,8 +7,16 @@ const blockchainJson = fs.readFileSync("./blockchain.json", {
 const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
 
 const blockchain = parsedBlockchain.blockchain;
-const { createHash, generateKeyPair, randomFill, createCipheriv } =
-  await import("node:crypto");
+
+import {
+  createHash,
+  randomFill,
+  createCipheriv,
+  generateKeyPairSync,
+  KeyObject,
+  sign,
+  verify,
+} from "node:crypto";
 
 interface Blockchain {
   blockchain: Array<Block | GenesisBlock>;
@@ -26,11 +33,6 @@ interface Block {
   timestamp: number;
   prevHash: string;
   hash: string | null;
-}
-
-interface NewEntryData {
-  prevHash: string | null;
-  prevBlockNumber: number | null;
 }
 
 async function createGenesisBlock(): Promise<GenesisBlock> {
@@ -57,7 +59,7 @@ let genesis: GenesisBlock;
 if (blockchain.length === 0) {
   genesis = await createGenesisBlock();
   blockchain.push(genesis);
-  console.log("Genesis block created ✓:", genesis);
+  console.log("Genesis block created 🗿 ", genesis);
 
   /* Write Genesis block to blockchain.json */
   fs.writeFile(
@@ -68,7 +70,7 @@ if (blockchain.length === 0) {
         console.log("sorry, err: ", err);
       }
       console.log(`
-      genesis block added 🗿
+      genesis block added to chain 🗿⛓️
       `);
     },
   );
@@ -85,15 +87,24 @@ let entryInput = "";
 /* Get new journal entry input */
 rl.question("Add new journal entry: ", (entry) => {
   entryInput = entry;
-  console.log(`Registered entry: "${entry.trim()}"`);
+  console.log(`Registered entry 📋 "${entry.trim()}"`);
 
   main();
   rl.close();
 });
 
-function encryptJournalEntry(entry: string) {
-  /* Create pub/priv key for encryption */
+interface EncryptedJournalEntry {
+  entry: string;
+  signature: string;
+}
 
+interface KeyPair {
+  publicKey: KeyObject;
+  privateKey: KeyObject;
+}
+
+/* async function specifically for generateKeyPair */
+function getKeyPair(): Promise<KeyPair> {
   const options = {
     publicKeyEncoding: {
       type: "spki",
@@ -106,37 +117,55 @@ function encryptJournalEntry(entry: string) {
   };
 
   /* Generate ed25519 key pair */
-  generateKeyPair("ed25519", options, (err, pubKey, privKey) => {
-    if (err) throw err;
-
-    /* Encrypt the data using AES algorithm */
-    const algo = "aes-192-cbc";
-
-    randomFill(new Uint8Array(16), (err, iv) => {
-      if (err) throw err;
-
-      randomFill(new Uint8Array(24), (err, symmetricKey) => {
-        if (err) throw err;
-
-        const cipher = createCipheriv(algo, symmetricKey, iv);
-        let encrypted = cipher.update(entry, "utf8", "hex");
-        encrypted += cipher.final("hex");
-        console.log({ encrypted });
-      });
-    });
-
-    let entryBuffer = Buffer.from(entry, "utf8");
-
-    /* Create a signature */
-    const signature = sign(null, entryBuffer, privKey);
-    console.log({ signature: signature.toString("base64") });
-
-    /* Verify the data */
-    let verified = verify(null, entryBuffer, pubKey, signature);
-    console.log({ verified });
+  return new Promise((resolve) => {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519", options);
+    resolve({ publicKey, privateKey });
   });
 }
 
-function main() {
-  encryptJournalEntry(entryInput);
+function getArrayBuffer(length: number): Promise<Uint8Array<ArrayBuffer>> {
+  return new Promise((resolve) => {
+    randomFill(new Uint8Array(length), (err, iv) => {
+      if (err) throw err;
+      resolve(iv);
+    });
+  });
+}
+
+async function encryptJournalEntry(
+  entry: string,
+): Promise<EncryptedJournalEntry> {
+  /* Create pub/priv key for encryption */
+  let { publicKey, privateKey } = await getKeyPair();
+
+  /* Encrypt the journal entry */
+  const algo = "aes-192-cbc";
+
+  let newIv: Uint8Array<ArrayBuffer> = await getArrayBuffer(16);
+  let newSymmetricKey: Uint8Array<ArrayBuffer> = await getArrayBuffer(24);
+
+  let entryBuffer = Buffer.from(entry, "utf8");
+
+  /* Create a signature */
+  const signature = sign(null, entryBuffer, privateKey);
+  let stringSignature = signature.toString("base64");
+  console.log("Signature created 🖋️ ", stringSignature);
+
+  /* Verify the data */
+  let verified = verify(null, entryBuffer, publicKey, signature);
+  console.log("Signature verified ✅ ", verified);
+
+  const cipher = createCipheriv(algo, newSymmetricKey, newIv);
+  let encrypted = cipher.update(entry, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  console.log("Entry encrypted 🔒 ", encrypted);
+
+  return { entry: encrypted, signature: stringSignature };
+}
+
+// function addEncryptedEntryToDatabase() {}
+
+async function main() {
+  let encryptedJournalEntry = await encryptJournalEntry(entryInput);
+  console.log({ encryptedJournalEntry });
 }
