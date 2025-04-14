@@ -12,10 +12,10 @@ import {
   createHash,
   randomFill,
   createCipheriv,
-  generateKeyPairSync,
   KeyObject,
   sign,
   verify,
+  generateKeyPair,
 } from "node:crypto";
 
 interface Blockchain {
@@ -118,8 +118,10 @@ function getKeyPair(): Promise<KeyPair> {
 
   /* Generate ed25519 key pair */
   return new Promise((resolve) => {
-    const { publicKey, privateKey } = generateKeyPairSync("ed25519", options);
-    resolve({ publicKey, privateKey });
+    generateKeyPair("ed25519", options, (err, publicKey, privateKey) => {
+      if (err) throw err;
+      resolve({ publicKey, privateKey });
+    });
   });
 }
 
@@ -140,9 +142,8 @@ async function encryptJournalEntry(
 
   /* Encrypt the journal entry */
   const algo = "aes-192-cbc";
-
-  let newIv: Uint8Array<ArrayBuffer> = await getArrayBuffer(16);
-  let newSymmetricKey: Uint8Array<ArrayBuffer> = await getArrayBuffer(24);
+  let iv: Uint8Array<ArrayBuffer> = await getArrayBuffer(16);
+  let symmetricKey: Uint8Array<ArrayBuffer> = await getArrayBuffer(24);
 
   let entryBuffer = Buffer.from(entry, "utf8");
 
@@ -155,7 +156,7 @@ async function encryptJournalEntry(
   let verified = verify(null, entryBuffer, publicKey, signature);
   console.log("Signature verified ✅ ", verified);
 
-  const cipher = createCipheriv(algo, newSymmetricKey, newIv);
+  const cipher = createCipheriv(algo, symmetricKey, iv);
   let encrypted = cipher.update(entry, "utf8", "hex");
   encrypted += cipher.final("hex");
   console.log("Entry encrypted 🔒 ", encrypted);
