@@ -1,13 +1,5 @@
 import * as readline from "node:readline";
 import fs from "node:fs";
-
-const blockchainJson = fs.readFileSync("./blockchain.json", {
-  encoding: "utf8",
-});
-const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
-
-const blockchain = parsedBlockchain.blockchain;
-
 import {
   createHash,
   randomFill,
@@ -17,6 +9,12 @@ import {
   verify,
   generateKeyPair,
 } from "node:crypto";
+
+const blockchainJson = fs.readFileSync("./blockchain.json", {
+  encoding: "utf8",
+});
+const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
+const blockchain = parsedBlockchain.blockchain;
 
 interface Blockchain {
   blockchain: Array<Block | GenesisBlock>;
@@ -33,6 +31,21 @@ interface Block {
   timestamp: number;
   prevHash: string;
   hash: string | null;
+}
+
+async function addBlockToChain(): Promise<string> {
+  return new Promise((resolve) => {
+    fs.writeFile(
+      "blockchain.json",
+      JSON.stringify({ blockchain: [...blockchain] }),
+      (err) => {
+        if (err) {
+          console.log("sorry, err: ", err);
+        }
+        resolve("genesis block added to chain ✅");
+      },
+    );
+  });
 }
 
 async function createGenesisBlock(): Promise<GenesisBlock> {
@@ -54,26 +67,18 @@ async function hashBlock(block: Block | GenesisBlock): Promise<string> {
 }
 
 /* Create Genesis block */
-let genesis: GenesisBlock;
+async function addGenesisBlock() {
+  let genesis: GenesisBlock;
 
-if (blockchain.length === 0) {
-  genesis = await createGenesisBlock();
-  blockchain.push(genesis);
-  console.log("Genesis block created 🗿 ", genesis);
+  if (blockchain.length === 0) {
+    genesis = await createGenesisBlock();
+    blockchain.push(genesis);
+    console.log("Genesis block created 🗿 ", genesis);
 
-  /* Write Genesis block to blockchain.json */
-  fs.writeFile(
-    "blockchain.json",
-    JSON.stringify({ blockchain: [...blockchain] }),
-    (err) => {
-      if (err) {
-        console.log("sorry, err: ", err);
-      }
-      console.log(`
-      genesis block added to chain 🗿⛓️
-      `);
-    },
-  );
+    /* Write Genesis block to blockchain.json */
+    let confirmationLog = await addBlockToChain();
+    console.log(confirmationLog);
+  }
 }
 
 /* Set up i/o interface */
@@ -82,16 +87,16 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-let entryInput = "";
-
 /* Get new journal entry input */
-rl.question("Add new journal entry: ", (entry) => {
-  entryInput = entry;
-  console.log(`Registered entry 📋 "${entry.trim()}"`);
-
-  main();
-  rl.close();
-});
+function getUserInput(): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question("Add new journal entry: ", (entry) => {
+      console.log(`Registered entry 📋 "${entry.trim()}"`);
+      rl.close();
+      resolve(entry);
+    });
+  });
+}
 
 interface EncryptedJournalEntry {
   entry: string;
@@ -166,7 +171,12 @@ async function encryptJournalEntry(
 
 // function addEncryptedEntryToDatabase() {}
 
-async function main() {
-  let encryptedJournalEntry = await encryptJournalEntry(entryInput);
-  console.log({ encryptedJournalEntry });
+function main() {
+  /* Create Genesis block if required */
+  addGenesisBlock()
+    .then(() => getUserInput())
+    .then((input) => encryptJournalEntry(input))
+    .then((result) => console.log({ result }));
 }
+
+main();
