@@ -10,15 +10,29 @@ import {
   generateKeyPair,
 } from "node:crypto";
 
+let currentHash: string = "default";
+
 const blockchainJson = fs.readFileSync("./blockchain.json", {
   encoding: "utf8",
 });
 const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
 const blockchain = parsedBlockchain.blockchain;
 
+const databaseJson = fs.readFileSync("./database.json", {
+  encoding: "utf8",
+});
+const database: Database = JSON.parse(databaseJson);
+
 interface Blockchain {
   blockchain: Array<Block | GenesisBlock>;
 }
+
+interface EncryptedJournalEntry {
+  entry: string;
+  signature: string;
+}
+
+type Database = Record<string, EncryptedJournalEntry>;
 
 interface GenesisBlock {
   blockNumber: number;
@@ -33,7 +47,14 @@ interface Block {
   hash: string | null;
 }
 
-async function addBlockToChain(): Promise<string> {
+interface KeyPair {
+  publicKey: KeyObject;
+  privateKey: KeyObject;
+}
+
+async function addBlockToChain(
+  blockType: "Genesis" | "Standard",
+): Promise<string> {
   return new Promise((resolve) => {
     fs.writeFile(
       "blockchain.json",
@@ -42,16 +63,31 @@ async function addBlockToChain(): Promise<string> {
         if (err) {
           console.log("sorry, err: ", err);
         }
-        resolve("genesis block added to chain ✅");
+        resolve(`${blockType} block added to chain ✅`);
       },
     );
   });
 }
 
+async function createBlock(): Promise<Block> {
+  const previousBlock: Block | GenesisBlock = blockchain[blockchain.length - 1];
+
+  const block: Block = {
+    blockNumber: previousBlock.blockNumber + 1,
+    timestamp: Date.now(), // TODO consider what format this should be
+    hash: null,
+    prevHash: previousBlock.hash ?? "",
+  };
+
+  const hashedBlock: string = await hashBlock(block);
+
+  return { ...block, hash: hashedBlock };
+}
+
 async function createGenesisBlock(): Promise<GenesisBlock> {
   const genesisBlock: GenesisBlock = {
     blockNumber: 1,
-    timestamp: Date.now(), // leave this for now. For searching by date we could write a function that parses it
+    timestamp: Date.now(), // TODO consider what format this should be
     hash: null,
   };
 
@@ -61,22 +97,35 @@ async function createGenesisBlock(): Promise<GenesisBlock> {
 }
 
 async function hashBlock(block: Block | GenesisBlock): Promise<string> {
-  let hash = createHash("sha256").update(block.toString());
+  let hash = createHash("sha256").update(JSON.stringify(block));
 
   return hash.digest("hex");
 }
 
-/* Create Genesis block */
-async function addGenesisBlock() {
-  let genesis: GenesisBlock;
-
+async function addBlock() {
+  /* Create Genesis block */
   if (blockchain.length === 0) {
-    genesis = await createGenesisBlock();
+    let genesis: GenesisBlock = await createGenesisBlock();
+
+    /* save hash as global for DB entry key */
+    currentHash = genesis.hash ?? "";
     blockchain.push(genesis);
     console.log("Genesis block created 🗿 ", genesis);
 
     /* Write Genesis block to blockchain.json */
-    let confirmationLog = await addBlockToChain();
+    let confirmationLog = await addBlockToChain("Genesis");
+    console.log(confirmationLog);
+  } else {
+    /* Create Standard block */
+    let block: Block = await createBlock();
+
+    // save hash as global for DB entry key
+    currentHash = block.hash ?? "";
+    blockchain.push(block);
+    console.log("New standard block created  ", block);
+
+    /* Write Genesis block to blockchain.json */
+    let confirmationLog = await addBlockToChain("Standard");
     console.log(confirmationLog);
   }
 }
@@ -96,16 +145,6 @@ function getUserInput(): Promise<string> {
       resolve(entry);
     });
   });
-}
-
-interface EncryptedJournalEntry {
-  entry: string;
-  signature: string;
-}
-
-interface KeyPair {
-  publicKey: KeyObject;
-  privateKey: KeyObject;
 }
 
 /* async function specifically for generateKeyPair */
@@ -169,14 +208,29 @@ async function encryptJournalEntry(
   return { entry: encrypted, signature: stringSignature };
 }
 
-// function addEncryptedEntryToDatabase() {}
+function addEncryptedEntryToDatabase(
+  hash: string,
+  entry: EncryptedJournalEntry,
+): Promise<void> {
+  database[hash] = entry;
+
+  return new Promise((resolve) => {
+    fs.writeFile("database.json", JSON.stringify(database), (err) => {
+      if (err) {
+        console.log("sorry, err: ", err);
+      }
+      resolve(console.log(`Entry added to Database ✅`));
+    });
+  });
+}
 
 function main() {
   /* Create Genesis block if required */
-  addGenesisBlock()
+  addBlock()
     .then(() => getUserInput())
     .then((input) => encryptJournalEntry(input))
-    .then((result) => console.log({ result }));
+    .then((entry) => addEncryptedEntryToDatabase(currentHash, entry))
+    .then(() => console.log("END"));
 }
 
 main();
