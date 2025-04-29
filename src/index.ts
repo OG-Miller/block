@@ -15,7 +15,7 @@ let currentHash: string = "default";
 const blockchainJson = fs.readFileSync("./blockchain.json", {
   encoding: "utf8",
 });
-const parsedBlockchain: Blockchain = JSON.parse(blockchainJson);
+const parsedBlockchain: BlockchainLedger = JSON.parse(blockchainJson);
 const blockchain = parsedBlockchain.blockchain;
 
 const databaseJson = fs.readFileSync("./database.json", {
@@ -23,8 +23,13 @@ const databaseJson = fs.readFileSync("./database.json", {
 });
 const database: Database = JSON.parse(databaseJson);
 
-interface Blockchain {
-  blockchain: Array<Block | GenesisBlock>;
+// error msg styling
+const RED = "\x1b[1m\x1b[31m";
+const RESET = "\x1b[0m";
+
+type Blockchain = (Block | GenesisBlock)[];
+interface BlockchainLedger {
+  blockchain: Blockchain;
 }
 
 interface EncryptedJournalEntry {
@@ -35,12 +40,15 @@ interface EncryptedJournalEntry {
 type Database = Record<string, EncryptedJournalEntry>;
 
 interface GenesisBlock {
+  type: "genesis";
   blockNumber: number;
   timestamp: number;
+  prevHash: string | null;
   hash: string | null;
 }
 
 interface Block {
+  type: "standard";
   blockNumber: number;
   timestamp: number;
   prevHash: string;
@@ -53,7 +61,7 @@ interface KeyPair {
 }
 
 async function addBlockToChain(
-  blockType: "Genesis" | "Standard",
+  blockType: "genesis" | "standard",
 ): Promise<string> {
   return new Promise((resolve) => {
     fs.writeFile(
@@ -63,7 +71,7 @@ async function addBlockToChain(
         if (err) {
           console.log("sorry, err: ", err);
         }
-        resolve(`${blockType} block added to chain ✅`);
+        resolve(`\n${blockType} block added to chain ✅`);
       },
     );
   });
@@ -73,6 +81,7 @@ async function createBlock(): Promise<Block> {
   const previousBlock: Block | GenesisBlock = blockchain[blockchain.length - 1];
 
   const block: Block = {
+    type: "standard",
     blockNumber: previousBlock.blockNumber + 1,
     timestamp: Date.now(), // TODO consider what format this should be
     hash: null,
@@ -86,8 +95,10 @@ async function createBlock(): Promise<Block> {
 
 async function createGenesisBlock(): Promise<GenesisBlock> {
   const genesisBlock: GenesisBlock = {
+    type: "genesis",
     blockNumber: 1,
     timestamp: Date.now(), // TODO consider what format this should be
+    prevHash: null,
     hash: null,
   };
 
@@ -113,7 +124,7 @@ async function addBlock() {
     console.log("Genesis block created 🗿 ", genesis);
 
     /* Write Genesis block to blockchain.json */
-    let confirmationLog = await addBlockToChain("Genesis");
+    let confirmationLog = await addBlockToChain("genesis");
     console.log(confirmationLog);
   } else {
     /* Create Standard block */
@@ -122,10 +133,10 @@ async function addBlock() {
     // save hash as global for DB entry key
     currentHash = block.hash ?? "";
     blockchain.push(block);
-    console.log("New standard block created  ", block);
+    console.log("\nNew standard block created  ", block);
 
     /* Write Genesis block to blockchain.json */
-    let confirmationLog = await addBlockToChain("Standard");
+    let confirmationLog = await addBlockToChain("standard");
     console.log(confirmationLog);
   }
 }
@@ -139,8 +150,8 @@ const rl = readline.createInterface({
 /* Get new journal entry input */
 function getUserInput(): Promise<string> {
   return new Promise((resolve) => {
-    rl.question("Add new journal entry: ", (entry) => {
-      console.log(`Registered entry 📋 "${entry.trim()}"`);
+    rl.question("\nAdd new journal entry: ", (entry) => {
+      console.log(`\nRegistered entry 📋 "${entry.trim()}"`);
       rl.close();
       resolve(entry);
     });
@@ -179,7 +190,7 @@ function getArrayBuffer(length: number): Promise<Uint8Array<ArrayBuffer>> {
 }
 
 async function encryptJournalEntry(
-  entry: string,
+  journalEntry: string,
 ): Promise<EncryptedJournalEntry> {
   /* Create pub/priv key for encryption */
   let { publicKey, privateKey } = await getKeyPair();
@@ -189,21 +200,21 @@ async function encryptJournalEntry(
   let iv: Uint8Array<ArrayBuffer> = await getArrayBuffer(16);
   let symmetricKey: Uint8Array<ArrayBuffer> = await getArrayBuffer(24);
 
-  let entryBuffer = Buffer.from(entry, "utf8");
+  let entryAsBuffer = Buffer.from(journalEntry, "utf8");
 
   /* Create a signature */
-  const signature = sign(null, entryBuffer, privateKey);
+  const signature = sign(null, entryAsBuffer, privateKey);
   let stringSignature = signature.toString("base64");
-  console.log("Signature created 🖋️ ", stringSignature);
+  console.log("\nSignature created 🖋️ ", stringSignature);
 
   /* Verify the data */
-  let verified = verify(null, entryBuffer, publicKey, signature);
-  console.log("Signature verified ✅ ", verified);
+  let verified = verify(null, entryAsBuffer, publicKey, signature);
+  console.log("\nSignature verified ✅ ", verified);
 
   const cipher = createCipheriv(algo, symmetricKey, iv);
-  let encrypted = cipher.update(entry, "utf8", "hex");
+  let encrypted = cipher.update(journalEntry, "utf8", "hex");
   encrypted += cipher.final("hex");
-  console.log("Entry encrypted 🔒 ", encrypted);
+  console.log("\nEntry encrypted 🔒 ", encrypted);
 
   return { entry: encrypted, signature: stringSignature };
 }
@@ -219,18 +230,64 @@ function addEncryptedEntryToDatabase(
       if (err) {
         console.log("sorry, err: ", err);
       }
-      resolve(console.log(`Entry added to Database ✅`));
+      resolve(console.log(`\nEntry added to Database ✅`));
     });
   });
 }
 
-function main() {
-  /* Create Genesis block if required */
-  addBlock()
+type Data = { compromised: boolean; message?: string };
+
+function validateBlockchain(blockchain: Blockchain): Promise<Data> {
+  return new Promise((resolve, reject) => {
+    // no blocks to validate or only genesis block exists (nothing to compare)
+    if (blockchain.length < 2) {
+      resolve({ compromised: false });
+    }
+
+    let previousHash: string = "";
+    let data: Data = { compromised: false };
+
+    for (const block of blockchain) {
+      if (block.type === "genesis") {
+        previousHash = block.hash ?? "";
+        continue;
+      }
+
+      if (block.type === "standard") {
+        if (previousHash !== block.prevHash) {
+          console.log("❌ BLOCKCHAIN COMPROMISED ❌\n");
+          data = {
+            compromised: true,
+            message:
+              `${RED}\nHash mismatch between blocks ${block.blockNumber - 1} & ${block.blockNumber}:${RESET}\n` +
+              `Block 2: ${previousHash}\n` +
+              ` ↓↓↓\n` +
+              `Block 3: ${block.prevHash}`,
+          };
+
+          break;
+        } else if (previousHash === block.prevHash) {
+          previousHash = block.hash ?? "";
+          data = { compromised: false };
+        }
+      }
+    }
+
+    if (data.compromised) {
+      reject(new Error(`\n${data.message}\n`));
+    } else {
+      console.log("\n🔒 BLOCKCHAIN VALIDATED 🔒\n");
+      resolve(data);
+    }
+  });
+}
+
+(function main() {
+  console.log("\n-[B]-[L]-[O]-[C]-[K]-[C]-[H]-[A]-[I]-[N]-\n");
+  validateBlockchain(blockchain)
+    .then(() => addBlock())
     .then(() => getUserInput())
     .then((input) => encryptJournalEntry(input))
     .then((entry) => addEncryptedEntryToDatabase(currentHash, entry))
-    .then(() => console.log("END"));
-}
-
-main();
+    .then(() => console.log("\nEND"));
+})();
