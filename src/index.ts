@@ -42,7 +42,7 @@ type Database = Record<string, EncryptedJournalEntry>;
 interface GenesisBlock {
   type: "genesis";
   blockNumber: number;
-  timestamp: number;
+  timestamp: string;
   prevHash: string | null;
   hash: string | null;
 }
@@ -50,7 +50,7 @@ interface GenesisBlock {
 interface Block {
   type: "standard";
   blockNumber: number;
-  timestamp: number;
+  timestamp: string;
   prevHash: string;
   hash: string | null;
 }
@@ -77,13 +77,29 @@ async function addBlockToChain(
   });
 }
 
+function getTimestamp(): string {
+  const timestamp = new Date();
+  const formattedTimestamp = timestamp.toLocaleString("en-GB", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  });
+
+  return formattedTimestamp;
+}
+
 async function createBlock(): Promise<Block> {
   const previousBlock: Block | GenesisBlock = blockchain[blockchain.length - 1];
 
   const block: Block = {
     type: "standard",
     blockNumber: previousBlock.blockNumber + 1,
-    timestamp: Date.now(), // TODO consider what format this should be
+    timestamp: getTimestamp(),
     hash: null,
     prevHash: previousBlock.hash ?? "",
   };
@@ -97,7 +113,7 @@ async function createGenesisBlock(): Promise<GenesisBlock> {
   const genesisBlock: GenesisBlock = {
     type: "genesis",
     blockNumber: 1,
-    timestamp: Date.now(), // TODO consider what format this should be
+    timestamp: getTimestamp(),
     prevHash: null,
     hash: null,
   };
@@ -113,7 +129,7 @@ async function hashBlock(block: Block | GenesisBlock): Promise<string> {
   return hash.digest("hex");
 }
 
-async function addBlock() {
+async function addNewBlock() {
   /* Create Genesis block */
   if (blockchain.length === 0) {
     let genesis: GenesisBlock = await createGenesisBlock();
@@ -141,14 +157,14 @@ async function addBlock() {
   }
 }
 
-/* Set up i/o interface */
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
 /* Get new journal entry input */
 function getUserInput(): Promise<string> {
+  /* Set up new i/o interface */
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
   return new Promise((resolve) => {
     rl.question("\nAdd new journal entry: ", (entry) => {
       console.log(`\nRegistered entry 📋 "${entry.trim()}"`);
@@ -282,12 +298,117 @@ function validateBlockchain(blockchain: Blockchain): Promise<Data> {
   });
 }
 
+type Journey = "read" | "write";
+
+function chooseUserJourney(): Promise<Journey> {
+  /* Set up new i/o interface */
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(
+      "\nEnter 'R' to read a journal entry or 'A' to add one: ",
+      (choice) => {
+        console.log(`\nRegistered choice📋 "${choice.trim()}"\n`);
+        rl.close();
+        resolve(choice === "R" || choice === "r" ? "read" : "write");
+      },
+    );
+  });
+}
+
+async function writeJourney() {
+  await addNewBlock()
+    .then(() => getUserInput())
+    .then((input) => encryptJournalEntry(input))
+    .then((entry) => addEncryptedEntryToDatabase(currentHash, entry));
+}
+
+function clearTerminal() {
+  process.stdout.write("\x1b[3J"); // Clear scrollback buffer
+  process.stdout.write("\x1b[2J"); // Clear entire screen
+  process.stdout.write("\x1b[0f"); // Move cursor to top left
+}
+
+/* open a CLI to choose journal entry & return 
+ its hash to look up database */
+function chooseJournalEntry(): Promise<string> {
+  /* Set up new i/o interface */
+  readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+
+  // Set 'rawMode' since we are using TTY
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+
+  return new Promise((resolve, reject) => {
+    let selected = 1;
+    let chosenBlock: GenesisBlock | Block | undefined;
+
+    // print initial list
+    for (const block of blockchain.reverse()) {
+      process.stdout.write(
+        `${block.blockNumber === selected ? "> " : "  "}${block.timestamp}\n`,
+      );
+    }
+
+    const readable = process.stdin;
+    readable.on("data", (chunk) => {
+      if (chunk.toString() === "j") {
+        clearTerminal();
+        selected -= 1;
+        for (const block of blockchain) {
+          process.stdout.write(
+            `${block.blockNumber === selected ? "> " : "  "}${block.timestamp}\n`,
+          );
+        }
+      }
+
+      if (chunk.toString() === "k") {
+        clearTerminal();
+        selected += 1;
+        for (const block of blockchain) {
+          process.stdout.write(
+            `${block.blockNumber === selected ? "> " : "  "}${block.timestamp}\n`,
+          );
+        }
+      }
+
+      if (chunk.toString() === "\r") {
+        clearTerminal();
+        chosenBlock = blockchain.find(
+          (block) => block.blockNumber === selected,
+        );
+        process.stdout.write(`you selected entry: ${chosenBlock?.timestamp}`);
+
+        if (!chosenBlock || chosenBlock?.hash === null) {
+          reject("block number is undefined");
+        } else {
+          resolve(chosenBlock.hash);
+        }
+      }
+    });
+  });
+}
+
+function readJourney() {
+  chooseJournalEntry().then((selectedBlockNumber) => {
+    const chosenEntry = blockchain.find(
+      (block) => block.hash === selectedBlockNumber,
+    );
+    console.log({ chosenEntry });
+  });
+}
+
 (function main() {
   console.log("\n-[B]-[L]-[O]-[C]-[K]-[C]-[H]-[A]-[I]-[N]-\n");
   validateBlockchain(blockchain)
-    .then(() => addBlock())
-    .then(() => getUserInput())
-    .then((input) => encryptJournalEntry(input))
-    .then((entry) => addEncryptedEntryToDatabase(currentHash, entry))
+    .then(() => chooseUserJourney())
+    .then((journey) => (journey === "write" ? writeJourney() : readJourney()))
     .then(() => console.log("\nEND"));
 })();
