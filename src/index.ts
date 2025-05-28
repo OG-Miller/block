@@ -8,6 +8,12 @@ import {
   sign,
   verify,
   generateKeyPair,
+  publicEncrypt,
+  privateDecrypt,
+  createPrivateKey,
+  createPublicKey,
+  createDecipheriv,
+  constants,
 } from "node:crypto";
 
 let currentHash: string = "default";
@@ -23,21 +29,11 @@ const databaseJson = fs.readFileSync("./database.json", {
 });
 const database: Database = JSON.parse(databaseJson);
 
-// error msg styling
-const RED = "\x1b[1m\x1b[31m";
-const RESET = "\x1b[0m";
+const privateJson = fs.readFileSync("./private.json", {
+  encoding: "utf8",
+});
 
-type Blockchain = (Block | GenesisBlock)[];
-interface BlockchainLedger {
-  blockchain: Blockchain;
-}
-
-interface EncryptedJournalEntry {
-  entry: string;
-  signature: string;
-}
-
-type Database = Record<string, EncryptedJournalEntry>;
+const keysFromFile: EncryptionKeys = JSON.parse(privateJson);
 
 interface GenesisBlock {
   type: "genesis";
@@ -55,9 +51,75 @@ interface Block {
   hash: string | null;
 }
 
+type Blockchain = (Block | GenesisBlock)[];
+
+interface BlockchainLedger {
+  blockchain: Blockchain;
+}
+
+type Database = Record<string, EncryptedJournalEntry>;
+type Data = { compromised: boolean; message?: string };
+type Journey = "read" | "write";
+
+interface EncryptedJournalEntry {
+  entry: string;
+  signature: string;
+  encryptedSymmetricKey: string;
+  iv: string;
+}
+
+interface EncryptionKeys {
+  privateKey: string;
+  publicKey: string;
+}
+
 interface KeyPair {
   publicKey: KeyObject;
   privateKey: KeyObject;
+}
+
+/* Global variables */
+let PRIVATE_KEY: KeyObject;
+let PUBLIC_KEY: KeyObject;
+const RED = "\x1b[1m\x1b[31m";
+const RESET = "\x1b[0m";
+
+async function checkOrCreateKeyPair(): Promise<void> {
+  /* Create new keys */
+  const newKeyPair: KeyPair = await createKeyPair(); // TODO: don't call this before checking if we need to
+
+  return new Promise((resolve) => {
+    if (keysFromFile.publicKey && keysFromFile.privateKey) {
+      /* Save current keys from file to global variables */
+      PRIVATE_KEY = createPrivateKey(keysFromFile.privateKey);
+      PUBLIC_KEY = createPublicKey(keysFromFile.publicKey);
+      resolve();
+      return;
+    }
+
+    /* Write the new KeyPair to file */
+    fs.writeFile(
+      "private.json",
+      JSON.stringify({
+        privateKey: newKeyPair.privateKey,
+        publicKey: newKeyPair.publicKey,
+      }),
+      (err) => {
+        if (err) {
+          console.log(
+            "Error when writing key pair to private.json, err: ",
+            err,
+          );
+        }
+        console.log(`\n${newKeyPair.publicKey} added to private.json  ✅`);
+        resolve();
+      },
+    );
+
+    /* Save new keys to global variables after writing them */
+    PRIVATE_KEY = newKeyPair.privateKey;
+    PUBLIC_KEY = newKeyPair.publicKey;
+  });
 }
 
 async function addBlockToChain(
@@ -134,7 +196,7 @@ async function addNewBlock() {
   if (blockchain.length === 0) {
     let genesis: GenesisBlock = await createGenesisBlock();
 
-    /* save hash as global for DB entry key */
+    /* Save hash as global for DB entry key */
     currentHash = genesis.hash ?? "";
     blockchain.push(genesis);
     console.log("Genesis block created 🗿 ", genesis);
@@ -157,8 +219,7 @@ async function addNewBlock() {
   }
 }
 
-/* Get new journal entry input */
-function getUserInput(): Promise<string> {
+function getJournalEntryInput(): Promise<string> {
   /* Set up new i/o interface */
   const rl = readline.createInterface({
     input: process.stdin,
@@ -174,9 +235,9 @@ function getUserInput(): Promise<string> {
   });
 }
 
-/* async function specifically for generateKeyPair */
-function getKeyPair(): Promise<KeyPair> {
+function createKeyPair(): Promise<KeyPair> {
   const options = {
+    modulusLength: 4096,
     publicKeyEncoding: {
       type: "spki",
       format: "pem",
@@ -189,14 +250,14 @@ function getKeyPair(): Promise<KeyPair> {
 
   /* Generate ed25519 key pair */
   return new Promise((resolve) => {
-    generateKeyPair("ed25519", options, (err, publicKey, privateKey) => {
+    generateKeyPair("rsa", options, (err, publicKey, privateKey) => {
       if (err) throw err;
       resolve({ publicKey, privateKey });
     });
   });
 }
 
-function getArrayBuffer(length: number): Promise<Uint8Array<ArrayBuffer>> {
+function getArrayBuffer(length: number): Promise<Uint8Array> {
   return new Promise((resolve) => {
     randomFill(new Uint8Array(length), (err, iv) => {
       if (err) throw err;
@@ -209,30 +270,44 @@ async function encryptJournalEntry(
   journalEntry: string,
 ): Promise<EncryptedJournalEntry> {
   /* Create pub/priv key for encryption */
-  let { publicKey, privateKey } = await getKeyPair();
 
-  /* Encrypt the journal entry */
+  /* Prepare buffers and algorithm for encryption */
   const algo = "aes-192-cbc";
-  let iv: Uint8Array<ArrayBuffer> = await getArrayBuffer(16);
-  let symmetricKey: Uint8Array<ArrayBuffer> = await getArrayBuffer(24);
-
-  let entryAsBuffer = Buffer.from(journalEntry, "utf8");
+  let iv = Buffer.from(await getArrayBuffer(16));
+  const symmetricKey = Buffer.from(await getArrayBuffer(24));
+  const entryAsBuffer = Buffer.from(journalEntry, "hex");
 
   /* Create a signature */
-  const signature = sign(null, entryAsBuffer, privateKey);
-  let stringSignature = signature.toString("base64");
+  const signature = sign("sha256", entryAsBuffer, PRIVATE_KEY);
+  const stringSignature = signature.toString("hex");
   console.log("\nSignature created 🖋️ ", stringSignature);
 
-  /* Verify the data */
-  let verified = verify(null, entryAsBuffer, publicKey, signature);
+  /* Verify the journal entry data */
+  const verified = verify(null, entryAsBuffer, PUBLIC_KEY, signature);
   console.log("\nSignature verified ✅ ", verified);
 
+  /* Encrypt the journal entry */
   const cipher = createCipheriv(algo, symmetricKey, iv);
-  let encrypted = cipher.update(journalEntry, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  console.log("\nEntry encrypted 🔒 ", encrypted);
+  let encryptedJournalEntry = cipher.update(journalEntry, "utf8", "hex");
+  encryptedJournalEntry += cipher.final("hex");
+  console.log("\nEntry encrypted 🔒 ", encryptedJournalEntry);
 
-  return { entry: encrypted, signature: stringSignature };
+  /* Encrypt the symmetricKey */
+  const encryptedSymmetricKey = publicEncrypt(
+    {
+      key: PUBLIC_KEY,
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    symmetricKey,
+  );
+
+  return {
+    entry: encryptedJournalEntry,
+    signature: stringSignature,
+    encryptedSymmetricKey: encryptedSymmetricKey.toString("hex"),
+    iv: Buffer.from(iv).toString("hex"),
+  };
 }
 
 function addEncryptedEntryToDatabase(
@@ -250,8 +325,6 @@ function addEncryptedEntryToDatabase(
     });
   });
 }
-
-type Data = { compromised: boolean; message?: string };
 
 function validateBlockchain(blockchain: Blockchain): Promise<Data> {
   return new Promise((resolve, reject) => {
@@ -298,8 +371,6 @@ function validateBlockchain(blockchain: Blockchain): Promise<Data> {
   });
 }
 
-type Journey = "read" | "write";
-
 function chooseUserJourney(): Promise<Journey> {
   /* Set up new i/o interface */
   const rl = readline.createInterface({
@@ -321,7 +392,7 @@ function chooseUserJourney(): Promise<Journey> {
 
 async function writeJourney() {
   await addNewBlock()
-    .then(() => getUserInput())
+    .then(() => getJournalEntryInput())
     .then((input) => encryptJournalEntry(input))
     .then((entry) => addEncryptedEntryToDatabase(currentHash, entry));
 }
@@ -332,7 +403,7 @@ function clearTerminal() {
   process.stdout.write("\x1b[0f"); // Move cursor to top left
 }
 
-/* open a CLI to choose journal entry & return 
+/* Open a CLI to choose journal entry & return 
  its hash to look up database */
 function chooseJournalEntry(): Promise<string> {
   /* Set up new i/o interface */
@@ -342,7 +413,7 @@ function chooseJournalEntry(): Promise<string> {
     terminal: true,
   });
 
-  // Set 'rawMode' since we are using TTY
+  /* Set 'rawMode' since we are using TTY */
   readline.emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
@@ -350,7 +421,7 @@ function chooseJournalEntry(): Promise<string> {
     let selected = 1;
     let chosenBlock: GenesisBlock | Block | undefined;
 
-    // print initial list
+    /* Print initial list */
     for (const block of blockchain.reverse()) {
       process.stdout.write(
         `${block.blockNumber === selected ? "> " : "  "}${block.timestamp}\n`,
@@ -396,18 +467,55 @@ function chooseJournalEntry(): Promise<string> {
   });
 }
 
+function decryptEntry(encryptedEntry: EncryptedJournalEntry) {
+  const { entry, encryptedSymmetricKey } = encryptedEntry;
+
+  /* Convert encryptedSymmetricKey from hex back to buffer */
+  const encryptedSymmetricKeyAsBuffer = Buffer.from(
+    encryptedSymmetricKey,
+    "hex",
+  );
+
+  const decryptedSymmetricKey = privateDecrypt(
+    {
+      key: PRIVATE_KEY,
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    encryptedSymmetricKeyAsBuffer,
+  );
+
+  const iv = Buffer.from(encryptedEntry.iv, "hex");
+  const algo = "aes-192-cbc";
+
+  /* Convert encryptedJournalEntry from hex back to buffer */
+  const encryptedJournalEntryAsBuffer: Buffer<ArrayBufferLike> = Buffer.from(
+    entry,
+    "hex",
+  );
+
+  /* Decrypt journal entry */
+  const decipher = createDecipheriv(algo, decryptedSymmetricKey, iv);
+  let decrypted = decipher
+    .update(encryptedJournalEntryAsBuffer)
+    .toString("utf8");
+  decrypted += decipher.final();
+  console.log({ decrypted }); // TODO: remove this after logging properly in read journey
+}
+
 function readJourney() {
-  chooseJournalEntry().then((selectedBlockNumber) => {
-    const chosenEntry = blockchain.find(
-      (block) => block.hash === selectedBlockNumber,
-    );
-    console.log({ chosenEntry });
+  chooseJournalEntry().then((selectedBlockHash) => {
+    const chosenJournalEntry = database[selectedBlockHash];
+    console.log({ chosenJournalEntry });
+
+    const decryptedEntry = decryptEntry(chosenJournalEntry);
   });
 }
 
 (function main() {
   console.log("\n-[B]-[L]-[O]-[C]-[K]-[C]-[H]-[A]-[I]-[N]-\n");
-  validateBlockchain(blockchain)
+  checkOrCreateKeyPair()
+    .then(() => validateBlockchain(blockchain))
     .then(() => chooseUserJourney())
     .then((journey) => (journey === "write" ? writeJourney() : readJourney()))
     .then(() => console.log("\nEND"));
