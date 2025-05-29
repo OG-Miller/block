@@ -83,17 +83,25 @@ let PRIVATE_KEY: KeyObject;
 let PUBLIC_KEY: KeyObject;
 const RED = "\x1b[1m\x1b[31m";
 const RESET = "\x1b[0m";
+const BLUE = "\x1b[1m\x1b[34m";
 
 async function checkOrCreateKeyPair(): Promise<void> {
-  /* Create new keys */
-  const newKeyPair: KeyPair = await createKeyPair(); // TODO: don't call this before checking if we need to
+  /* Create new keys (only if keysFromFile DON'T already exist) */
+  const keysFromFileAlreadyExist: boolean = Boolean(keysFromFile.privateKey);
+  const newKeyPair: KeyPair | null = await createKeyPair(
+    keysFromFileAlreadyExist,
+  );
 
   return new Promise((resolve) => {
-    if (keysFromFile.publicKey && keysFromFile.privateKey) {
-      /* Save current keys from file to global variables */
+    if (keysFromFileAlreadyExist) {
+      /* Save keysFromFile to global variables */
       PRIVATE_KEY = createPrivateKey(keysFromFile.privateKey);
       PUBLIC_KEY = createPublicKey(keysFromFile.publicKey);
       resolve();
+      return;
+    }
+
+    if (!newKeyPair) {
       return;
     }
 
@@ -133,7 +141,7 @@ async function addBlockToChain(
         if (err) {
           console.log("sorry, err: ", err);
         }
-        resolve(`\n${blockType} block added to chain ✅`);
+        resolve(`\n✅${blockType} block added to chain\n`);
       },
     );
   });
@@ -199,7 +207,7 @@ async function addNewBlock() {
     /* Save hash as global for DB entry key */
     currentHash = genesis.hash ?? "";
     blockchain.push(genesis);
-    console.log("Genesis block created 🗿 ", genesis);
+    console.log("\n🗿Genesis block created", genesis);
 
     /* Write Genesis block to blockchain.json */
     let confirmationLog = await addBlockToChain("genesis");
@@ -211,7 +219,7 @@ async function addNewBlock() {
     // save hash as global for DB entry key
     currentHash = block.hash ?? "";
     blockchain.push(block);
-    console.log("\nNew standard block created  ", block);
+    console.log("\n✅New standard block created  ", block);
 
     /* Write Genesis block to blockchain.json */
     let confirmationLog = await addBlockToChain("standard");
@@ -227,15 +235,16 @@ function getJournalEntryInput(): Promise<string> {
   });
 
   return new Promise((resolve) => {
-    rl.question("\nAdd new journal entry: ", (entry) => {
-      console.log(`\nRegistered entry 📋 "${entry.trim()}"`);
+    rl.question(`\n${BLUE}Add new journal entry: ${RESET}`, (entry) => {
       rl.close();
       resolve(entry);
     });
   });
 }
 
-function createKeyPair(): Promise<KeyPair> {
+function createKeyPair(
+  keysFromFileAlreadyExist: boolean,
+): Promise<KeyPair | null> {
   const options = {
     modulusLength: 4096,
     publicKeyEncoding: {
@@ -250,7 +259,13 @@ function createKeyPair(): Promise<KeyPair> {
 
   /* Generate ed25519 key pair */
   return new Promise((resolve) => {
+    if (keysFromFileAlreadyExist) {
+      resolve(null);
+      return;
+    }
+
     generateKeyPair("rsa", options, (err, publicKey, privateKey) => {
+      console.log("Generating keys");
       if (err) throw err;
       resolve({ publicKey, privateKey });
     });
@@ -280,17 +295,18 @@ async function encryptJournalEntry(
   /* Create a signature */
   const signature = sign("sha256", entryAsBuffer, PRIVATE_KEY);
   const stringSignature = signature.toString("hex");
-  console.log("\nSignature created 🖋️ ", stringSignature);
 
   /* Verify the journal entry data */
   const verified = verify(null, entryAsBuffer, PUBLIC_KEY, signature);
-  console.log("\nSignature verified ✅ ", verified);
+  console.log(
+    `\n${verified ? "✅Signature verified" : "❌Signature NOT verified"}`,
+  );
 
   /* Encrypt the journal entry */
   const cipher = createCipheriv(algo, symmetricKey, iv);
   let encryptedJournalEntry = cipher.update(journalEntry, "utf8", "hex");
   encryptedJournalEntry += cipher.final("hex");
-  console.log("\nEntry encrypted 🔒 ", encryptedJournalEntry);
+  console.log("\n🔒Entry encrypted");
 
   /* Encrypt the symmetricKey */
   const encryptedSymmetricKey = publicEncrypt(
@@ -321,7 +337,7 @@ function addEncryptedEntryToDatabase(
       if (err) {
         console.log("sorry, err: ", err);
       }
-      resolve(console.log(`\nEntry added to Database ✅`));
+      resolve(console.log(`\n✅Entry added to Database`));
     });
   });
 }
@@ -365,7 +381,7 @@ function validateBlockchain(blockchain: Blockchain): Promise<Data> {
     if (data.compromised) {
       reject(new Error(`\n${data.message}\n`));
     } else {
-      console.log("\n🔒 BLOCKCHAIN VALIDATED 🔒\n");
+      console.log("\n🔒BLOCKCHAIN VALIDATED");
       resolve(data);
     }
   });
@@ -382,7 +398,7 @@ function chooseUserJourney(): Promise<Journey> {
     rl.question(
       "\nEnter 'R' to read a journal entry or 'A' to add one: ",
       (choice) => {
-        console.log(`\nRegistered choice📋 "${choice.trim()}"\n`);
+        console.log(`\nRegistered choice📋 "${choice.trim()}"`);
         rl.close();
         resolve(choice === "R" || choice === "r" ? "read" : "write");
       },
@@ -455,7 +471,9 @@ function chooseJournalEntry(): Promise<string> {
         chosenBlock = blockchain.find(
           (block) => block.blockNumber === selected,
         );
-        process.stdout.write(`you selected entry: ${chosenBlock?.timestamp}`);
+        process.stdout.write(
+          `\nyou selected entry: ${chosenBlock?.timestamp}\n`,
+        );
 
         if (!chosenBlock || chosenBlock?.hash === null) {
           reject("block number is undefined");
@@ -467,7 +485,7 @@ function chooseJournalEntry(): Promise<string> {
   });
 }
 
-function decryptEntry(encryptedEntry: EncryptedJournalEntry) {
+function decryptEntry(encryptedEntry: EncryptedJournalEntry): string {
   const { entry, encryptedSymmetricKey } = encryptedEntry;
 
   /* Convert encryptedSymmetricKey from hex back to buffer */
@@ -500,15 +518,15 @@ function decryptEntry(encryptedEntry: EncryptedJournalEntry) {
     .update(encryptedJournalEntryAsBuffer)
     .toString("utf8");
   decrypted += decipher.final();
-  console.log({ decrypted }); // TODO: remove this after logging properly in read journey
+  return decrypted;
 }
 
 function readJourney() {
   chooseJournalEntry().then((selectedBlockHash) => {
     const chosenJournalEntry = database[selectedBlockHash];
-    console.log({ chosenJournalEntry });
 
     const decryptedEntry = decryptEntry(chosenJournalEntry);
+    console.log(`\n${BLUE}${decryptedEntry}\n`);
   });
 }
 
