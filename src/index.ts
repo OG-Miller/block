@@ -527,6 +527,9 @@ function readJourney() {
 
     const decryptedEntry = decryptEntry(chosenJournalEntry);
     console.log(`\n${BLUE}${decryptedEntry}\n`);
+
+    // End Program
+    process.exit(0);
   });
 }
 
