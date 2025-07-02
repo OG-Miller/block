@@ -394,11 +394,15 @@ function chooseUserJourney(): Promise<Journey> {
     output: process.stdout,
   });
 
+  const blockchainLength = blockchain.length;
+  const readAndWriteMessage = "\nEnter 'R' to read a journal entry or 'A' to add one: \n";
+  const writeMessage = "\nEnter A to add journal entry: \n";
+
   return new Promise((resolve) => {
     rl.question(
-      "\nEnter 'R' to read a journal entry or 'A' to add one: ",
+      `${ blockchainLength > 0 ? readAndWriteMessage : writeMessage}`,
       (choice) => {
-        console.log(`\nRegistered choice📋 "${choice.trim()}"`);
+        console.log(`\nRegistered choice📋 "${choice.trim()}"\n`);
         rl.close();
         resolve(choice === "R" || choice === "r" ? "read" : "write");
       },
@@ -538,6 +542,5 @@ function readJourney() {
   checkOrCreateKeyPair()
     .then(() => validateBlockchain(blockchain))
     .then(() => chooseUserJourney())
-    .then((journey) => (journey === "write" ? writeJourney() : readJourney()))
-    .then(() => console.log("\nEND"));
+    .then((journey) => (journey === "write" ? writeJourney() : readJourney()));
 })();
